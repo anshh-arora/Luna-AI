@@ -1,0 +1,9 @@
+flask
+groq
+python-dotenv
+pyttsx3
+SpeechRecognition
+pyaudio
+uuid
+Flask-Bcrypt
+Flask-PyMongo
