@@ -333,3 +333,70 @@ body {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-6px); }
 }
+
+/* General Styling for Microphone Button */
+.mic-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f44336; /* Red color for mic button */
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease;
+}
+
+.mic-button:hover {
+    transform: scale(1.1); /* Slight zoom-in effect */
+}
+
+/* Microphone Icon Inside the Button */
+.mic-button i {
+    font-size: 1.5rem;
+}
+
+/* Mic Animation Circle */
+.mic-circle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 70px;
+    height: 70px;
+    background-color: rgba(244, 67, 54, 0.2); /* Transparent red */
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+    animation: mic-animation 1.5s infinite ease-in-out;
+    pointer-events: none;
+    z-index: -1;
+}
+
+/* Animation Keyframes */
+@keyframes mic-animation {
+    0% {
+        transform: translate(-50%, -50%) scale(0.9);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.5);
+        opacity: 0.5;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(2);
+        opacity: 0;
+    }
+}
+
+/* Active Listening State for the Mic Button */
+.mic-button.active .mic-circle {
+    animation-play-state: running;
+}
+
+.mic-button .mic-circle {
+    animation-play-state: paused; /* Default state */
+}

@@ -27,12 +27,9 @@
             </nav>
             <div class="sidebar-footer">
                 <h5>{{ email }}</h5>
-                    <div class="sign_out">
-                        <a href="{{ url_for('logout') }}" class="logout-button">Sign Out<i class='bx bx-log-out-circle'></i></a>
-                    </div>
-                    
-                    
-                
+                <div class="sign_out">
+                    <a href="{{ url_for('logout') }}" class="logout-button">Sign Out<i class='bx bx-log-out-circle'></i></a>
+                </div>
             </div>
         </div>
 
@@ -54,6 +51,13 @@
                     <h3>Welcome to Robert AI</h3>
                     <p>How can I help you learn a language today?</p>
                 </div>
+
+                <!-- Example bot message with speaker icon -->
+                <div class="bot-message">
+                    <p>Hello! How can I assist you?</p>
+                    <i class="fas fa-volume-up speaker-icon" id="bot-speaker-icon"></i>
+                </div>
+
             </div>
 
             <div class="chat-input-area">
@@ -63,10 +67,20 @@
                         placeholder="Type your message..." 
                         rows="1"
                     ></textarea>
+                    
+                    <!-- Microphone button -->
+                    <button id="mic-btn" class="mic-button">
+                        <i class="fa-solid fa-microphone"></i>
+                        <div class="mic-circle" id="mic-animation"></div>
+                    </button>
+
+                    <!-- Send button -->
                     <button id="send-btn" class="send-button">
                         <i class="fas fa-paper-plane"></i>
+                    </button>
                 </div>
                 <div class="input-hints">
+                    <!-- Optional hints for users -->
                 </div>
             </div>
         </main>

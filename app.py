@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file
 from flask_pymongo import PyMongo
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -7,7 +7,12 @@ from groq import Groq
 import os
 import uuid
 from datetime import datetime, timedelta
-from bson import ObjectId
+import speech_recognition as sr
+from gtts import gTTS
+import tempfile
+import time
+import threading
+import queue
 
 # Load environment variables
 load_dotenv()
@@ -39,10 +44,14 @@ messages_collection = mongo.db.messages
 sessions_collection = mongo.db.sessions
 user_preferences_collection = mongo.db.user_preferences
 
+# Thread-safe queue for TTS requests
+tts_queue = queue.Queue()
+
 # Constants
 MAX_CONVERSATIONS = 100000000000
 DEFAULT_LANGUAGE = "English"
 
+# Helper Classes and Functions
 class User(UserMixin):
     def __init__(self, user_data):
         self.id = str(user_data["_id"])
@@ -57,7 +66,42 @@ def load_user(user_id):
     user_data = users_collection.find_one({"_id": user_id})
     return User(user_data) if user_data else None
 
-# New Function: Load base prompt from a text file
+def text_to_speech(text):
+    """Convert text to speech and return audio file path."""
+    try:
+        tts = gTTS(text=text, lang='en')
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
+            temp_filename = fp.name
+            tts.save(temp_filename)
+            return temp_filename
+    except Exception as e:
+        print(f"TTS Error: {str(e)}")
+        return None
+
+def speech_to_text(audio_data):
+    """Convert speech to text using recognition."""
+    recognizer = sr.Recognizer()
+    try:
+        text = recognizer.recognize_google(audio_data)
+        return text
+    except sr.UnknownValueError:
+        return "Could not understand audio"
+    except sr.RequestError as e:
+        return f"Could not request results; {str(e)}"
+
+def cleanup_temp_audio_files():
+    """Clean up old temporary audio files."""
+    temp_dir = tempfile.gettempdir()
+    current_time = time.time()
+    for filename in os.listdir(temp_dir):
+        if filename.endswith('.mp3'):
+            filepath = os.path.join(temp_dir, filename)
+            if current_time - os.path.getctime(filepath) > 3600:  # 1 hour old
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+
 def load_base_prompt():
     try:
         with open("base_prompt.txt", "r") as file:
@@ -100,7 +144,6 @@ def cleanup_old_conversations(user_id):
     """Delete oldest conversations if user exceeds maximum limit."""
     conversation_count = conversations_collection.count_documents({"user_id": user_id})
     if conversation_count >= MAX_CONVERSATIONS:
-        # Find and delete oldest conversations
         excess_count = conversation_count - MAX_CONVERSATIONS + 1
         oldest_conversations = conversations_collection.find(
             {"user_id": user_id}
@@ -146,7 +189,6 @@ def chat_with_groq(conversation_history, user_query, user_id):
             {"role": "system", "content": personalized_prompt},
         ]
         
-        # Add user preferences context
         prefs = get_user_preferences(user_id)
         context_message = (
             f"Remember: The user is learning {prefs['target_language']} at a "
@@ -155,7 +197,6 @@ def chat_with_groq(conversation_history, user_query, user_id):
         )
         messages.append({"role": "system", "content": context_message})
         
-        # Add conversation history
         for msg in conversation_history[-10:]:
             role = "assistant" if msg["is_bot"] else "user"
             messages.append({"role": role, "content": msg["content"]})
@@ -175,30 +216,7 @@ def chat_with_groq(conversation_history, user_query, user_id):
         print(f"Error in chat_with_groq: {str(e)}")
         return f"I apologize, but I'm having trouble responding right now. Error: {str(e)}"
     
-@app.route("/new-conversation", methods=["POST"])
-@login_required
-def new_conversation():
-    """Create a new conversation."""
-    try:
-        # Clean up old conversations if needed
-        cleanup_old_conversations(current_user.id)
-        
-        conversation_id = str(uuid.uuid4())
-        conversations_collection.insert_one({
-            "_id": conversation_id,
-            "user_id": current_user.id,
-            "title": "New Chat",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
-        })
-        
-        return jsonify({
-            "conversationId": conversation_id,
-            "message": "Conversation created successfully"
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    # Routes
 @app.route("/")
 @login_required
 def home():
@@ -224,7 +242,6 @@ def login():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """Enhanced registration with user preferences."""
     if request.method == "POST":
         name = request.form.get("name")
         email = request.form.get("email")
@@ -250,7 +267,6 @@ def register():
         
         users_collection.insert_one(new_user)
         
-        # Initialize user preferences
         initial_preferences = {
             "user_id": user_id,
             "target_language": target_language,
@@ -266,44 +282,14 @@ def register():
 
     return render_template("register.html")
 
-@app.route("/update-preferences", methods=["POST"])
-@login_required
-def update_preferences():
-    """Update user preferences."""
-    data = request.json
-    
-    preferences = {
-        "user_id": current_user.id,
-        "target_language": data.get("target_language", DEFAULT_LANGUAGE),
-        "proficiency_level": data.get("proficiency_level", "beginner"),
-        "learning_goals": data.get("learning_goals", []),
-        "preferred_topics": data.get("preferred_topics", []),
-        "daily_practice_time": data.get("daily_practice_time", 30),
-        "updated_at": datetime.utcnow()
-    }
-    
-    user_preferences_collection.update_one(
-        {"user_id": current_user.id},
-        {"$set": preferences},
-        upsert=True
-    )
-    
-    return jsonify({"success": True})
-
-@app.route("/get-preferences")
-@login_required
-def get_preferences():
-    """Get user preferences."""
-    prefs = get_user_preferences(current_user.id)
-    return jsonify(prefs)
-
 @app.route("/query", methods=["POST"])
 @login_required
 def query():
-    """Enhanced query handler with user context."""
+    """Enhanced query handler with voice support."""
     data = request.json
     user_query = data.get("question", "").strip()
     conversation_id = data.get("conversationId")
+    voice_output = data.get("voiceOutput", False)
     
     if not user_query or not conversation_id:
         return jsonify({"error": "Invalid request"}), 400
@@ -311,7 +297,6 @@ def query():
     history = get_session_history(current_user.id, conversation_id)
     bot_response = chat_with_groq(history, user_query, current_user.id)
 
-    # Create messages with additional metadata
     user_message = {
         "content": user_query,
         "is_bot": False,
@@ -326,12 +311,11 @@ def query():
         "created_at": datetime.utcnow()
     }
 
-    # Save messages
     messages_collection.insert_many([
         {**user_message, "_id": str(uuid.uuid4()), "conversation_id": conversation_id},
         {**bot_message, "_id": str(uuid.uuid4()), "conversation_id": conversation_id}
     ])
-    # Update history and conversation
+
     history.extend([user_message, bot_message])
     save_session_history(current_user.id, conversation_id, history)
     
@@ -346,110 +330,188 @@ def query():
         }
     )
 
+    audio_url = None
+    if voice_output:
+        try:
+            audio_file_path = text_to_speech(bot_response)
+            if audio_file_path:
+                audio_url = f"/get-audio/{os.path.basename(audio_file_path)}"
+        except Exception as e:
+            print(f"Voice output error: {str(e)}")
+
     return jsonify({
-        "response": [bot_response],
-        "conversationId": conversation_id
+        "response": bot_response,
+        "conversationId": conversation_id,
+        "audioUrl": audio_url
     })
 
-@app.route("/get-conversations")
+@app.route("/speech-to-text", methods=["POST"])
+@login_required
+def handle_speech_to_text():
+    """Handle voice input from client."""
+    if "audio" not in request.files:
+        return jsonify({"error": "No audio file provided"}), 400
+    
+    audio_file = request.files["audio"]
+    recognizer = sr.Recognizer()
+    
+    try:
+        with sr.AudioFile(audio_file) as source:
+            audio_data = recognizer.record(source)
+        text = speech_to_text(audio_data)
+        return jsonify({"text": text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/text-to-speech", methods=["POST"])
+@login_required
+def handle_text_to_speech():
+    """Convert text to speech and return audio file."""
+    data = request.json
+    text = data.get("text")
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+    
+    try:
+        audio_file_path = text_to_speech(text)
+        if audio_file_path:
+            return send_file(
+                audio_file_path,
+                mimetype="audio/mp3",
+                as_attachment=True,
+                download_name="response.mp3"
+            )
+        else:
+            return jsonify({"error": "Failed to generate speech"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/get-audio/<filename>")
+@login_required
+def get_audio(filename):
+    """Serve generated audio files."""
+    try:
+        return send_file(
+            os.path.join(tempfile.gettempdir(), filename),
+            mimetype="audio/mp3"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/new-conversation", methods=["POST"])
+@login_required
+def new_conversation():
+    """Create a new conversation."""
+    conversation_id = str(uuid.uuid4())
+    conversation = {
+        "_id": conversation_id,
+        "user_id": current_user.id,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+        "title": "New Conversation"
+    }
+    
+    conversations_collection.insert_one(conversation)
+    cleanup_old_conversations(current_user.id)
+    
+    return jsonify({
+        "conversationId": conversation_id,
+        "title": "New Conversation"
+    })
+
+@app.route("/conversations")
 @login_required
 def get_conversations():
-    """Get all conversations for the current user."""
+    """Get user's conversations."""
     conversations = conversations_collection.find(
         {"user_id": current_user.id}
     ).sort("updated_at", -1)
     
-    return jsonify({
-        "conversations": [{
-            "id": str(conv["_id"]),
-            "title": conv.get("title", "New Chat"),
-            "created_at": conv["created_at"].isoformat()
-        } for conv in conversations]
-    })
+    return jsonify([{
+        "id": str(conv["_id"]),
+        "title": conv.get("title", "Untitled"),
+        "updated_at": conv["updated_at"].isoformat()
+    } for conv in conversations])
 
-@app.route("/get-conversation/<conversation_id>")
+@app.route("/conversation/<conversation_id>")
 @login_required
 def get_conversation(conversation_id):
-    """Get messages for a specific conversation."""
-    conversation = conversations_collection.find_one({
-        "_id": conversation_id,
-        "user_id": current_user.id
-    })
+    """Get messages from a specific conversation."""
+    messages = messages_collection.find(
+        {"conversation_id": conversation_id}
+    ).sort("created_at", 1)
     
-    if not conversation:
-        return jsonify({"error": "Conversation not found"}), 404
-    
-    messages = get_session_history(current_user.id, conversation_id)
-    
-    if not messages:
-        db_messages = list(messages_collection.find(
-            {"conversation_id": conversation_id}
-        ).sort("created_at", 1))
-        
-        messages = [{
-            "content": msg["content"],
-            "is_bot": msg["is_bot"],
-            "created_at": msg["created_at"].isoformat()
-        } for msg in db_messages]
-        
-        save_session_history(current_user.id, conversation_id, messages)
-    
-    return jsonify({"messages": messages})
+    return jsonify([{
+        "content": msg["content"],
+        "is_bot": msg["is_bot"],
+        "created_at": msg["created_at"].isoformat()
+    } for msg in messages])
 
-@app.route("/update-chat-title", methods=["POST"])
+@app.route("/update-preferences", methods=["POST"])
 @login_required
-def update_chat_title():
-    """Update the title of a conversation."""
+def update_preferences():
+    """Update user preferences."""
     data = request.json
-    conversation_id = data.get("conversationId")
-    title = data.get("title")
-    
-    if not conversation_id or not title:
-        return jsonify({"error": "Missing required fields"}), 400
-    
-    result = conversations_collection.update_one(
-        {"_id": conversation_id, "user_id": current_user.id},
-        {"$set": {"title": title}}
+    user_preferences_collection.update_one(
+        {"user_id": current_user.id},
+        {
+            "$set": {
+                "target_language": data.get("target_language", DEFAULT_LANGUAGE),
+                "proficiency_level": data.get("proficiency_level", "beginner"),
+                "learning_goals": data.get("learning_goals", []),
+                "preferred_topics": data.get("preferred_topics", []),
+                "daily_practice_time": data.get("daily_practice_time", 30),
+                "updated_at": datetime.utcnow()
+            }
+        },
+        upsert=True
     )
-    
-    if result.modified_count == 0:
-        return jsonify({"error": "Conversation not found"}), 404
-    
-    return jsonify({"success": True})
-
-@app.route("/delete-conversation/<conversation_id>", methods=["DELETE"])
-@login_required
-def delete_conversation(conversation_id):
-    """Delete a conversation and its messages."""
-    try:
-        # Verify conversation belongs to current user
-        conversation = conversations_collection.find_one({
-            "_id": conversation_id,
-            "user_id": current_user.id
-        })
-        
-        if not conversation:
-            return jsonify({"error": "Conversation not found"}), 404
-        
-        # Delete conversation and its messages
-        conversations_collection.delete_one({"_id": conversation_id})
-        messages_collection.delete_many({"conversation_id": conversation_id})
-        sessions_collection.delete_one({
-            "user_id": current_user.id,
-            "conversation_id": conversation_id
-        })
-        
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "success"})
 
 @app.route("/logout")
 @login_required
 def logout():
-    """Handle user logout."""
-    session.clear()
+    """Log out the current user."""
     logout_user()
     return redirect(url_for("login"))
 
+@app.route("/delete-conversation/<conversation_id>", methods=["DELETE"])
+@login_required
+def delete_conversation(conversation_id):
+    """Delete a specific conversation and its messages."""
+    conversations_collection.delete_one({
+        "_id": conversation_id,
+        "user_id": current_user.id
+    })
+    messages_collection.delete_many({"conversation_id": conversation_id})
+    sessions_collection.delete_one({
+        "user_id": current_user.id,
+        "conversation_id": conversation_id
+    })
+    return jsonify({"status": "success"})
+
+@app.route("/rename-conversation/<conversation_id>", methods=["PUT"])
+@login_required
+def rename_conversation(conversation_id):
+    """Rename a conversation."""
+    new_title = request.json.get("title", "Untitled")
+    conversations_collection.update_one(
+        {"_id": conversation_id, "user_id": current_user.id},
+        {"$set": {"title": new_title}}
+    )
+    return jsonify({"status": "success"})
+
+def start_cleanup_thread():
+    """Start a background thread to clean up old audio files."""
+    def cleanup_loop():
+        while True:
+            cleanup_temp_audio_files()
+            time.sleep(3600)  # Run every hour
+    
+    cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+    cleanup_thread.start()
+
 if __name__ == "__main__":
+    start_cleanup_thread()
     app.run(debug=True)
