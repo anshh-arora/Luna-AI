@@ -4,10 +4,13 @@ from groq import Groq
 import os
 import uuid
 import tempfile
+import sounddevice as sd
+import numpy as np
+import io
+import base64
+import wave
 import speech_recognition as sr
 from gtts import gTTS
-import base64
-import io
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
@@ -78,23 +81,43 @@ def text_to_speech(text):
         print(f"Error in text_to_speech: {str(e)}")
         return None
 
+def record_audio(duration=5, samplerate=16000):
+    try:
+        print("Recording...")
+        audio_data = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='int16')
+        sd.wait()  # Wait for the recording to finish
+        return audio_data
+    except Exception as e:
+        print(f"Error in record_audio: {str(e)}")
+        return None
+
+def save_audio(audio_data, filename="temp_audio.wav"):
+    try:
+        with wave.open(filename, 'wb') as wf:
+            wf.setnchannels(1)  # Mono audio
+            wf.setsampwidth(2)  # 16-bit samples
+            wf.setframerate(16000)  # Sampling rate
+            wf.writeframes(audio_data)
+    except Exception as e:
+        print(f"Error saving audio: {str(e)}")
+
 def speech_to_text(audio_data):
     try:
-        # Convert audio data to AudioFile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
-            temp_audio.write(audio_data)
-            temp_audio.flush()
-            
-            with sr.AudioFile(temp_audio.name) as source:
-                audio = recognizer.record(source)
-                text = recognizer.recognize_google(audio)
-                return text
+        # Save audio data to a temporary file
+        temp_audio_path = tempfile.mktemp(suffix='.wav')
+        save_audio(audio_data, temp_audio_path)
+        
+        # Use SpeechRecognition to convert speech to text
+        with sr.AudioFile(temp_audio_path) as source:
+            audio = recognizer.record(source)
+            text = recognizer.recognize_google(audio)
+            return text
     except Exception as e:
         print(f"Error in speech_to_text: {str(e)}")
         return None
     finally:
-        if 'temp_audio' in locals():
-            os.unlink(temp_audio.name)
+        if 'temp_audio_path' in locals():
+            os.unlink(temp_audio_path)
 
 @app.route('/')
 def index():
@@ -166,3 +189,7 @@ def handle_voice():
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# Run the application
+if __name__ == '__main__':
+    app.run(debug=True)
