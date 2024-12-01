@@ -5,3 +5,4 @@ groq==0.13.0
 gtts==2.3.1
 sounddevice==0.4.6
 SpeechRecognition==3.8.1
+gunicorn==20.1.0
