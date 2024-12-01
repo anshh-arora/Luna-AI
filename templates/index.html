@@ -3,88 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robert AI</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <title>AI Chatbot</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <button class="new-chat-btn">
-                    <i class="fas fa-plus"></i>
-                    <span>New Chat</span>
-                </button>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="bot-profile">
+                <i class="fas fa-atom"></i>
+                <span class="bot-name">AI Assistant</span>
             </div>
-            <nav class="chat-history">
-                <div class="chat-history-section">
-                    <h3>Recent Chats</h3>
-                    <ul id="chat-list">
-                        <!-- Dynamically populated -->
-                    </ul>
+            <div class="voice-controls">
+                
+            </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages"></div>
+
+        <div class="message-templates" style="display: none;">
+            <div class="message bot-message">
+                <div class="message-avatar">
+                    <i class="fas fa-atom"></i>
                 </div>
-            </nav>
-            <div class="sidebar-footer">
-                <h5>{{ email }}</h5>
-                <div class="sign_out">
-                    <a href="{{ url_for('logout') }}" class="logout-button">Sign Out<i class='bx bx-log-out-circle'></i></a>
+                <div class="message-content">
+
                 </div>
+            </div>
+            
+            <div class="message user-message">
+                <div class="message-avatar">
+                    <i class="fas fa-user-alt"></i>
+                </div>
+                <div class="message-content"></div>
             </div>
         </div>
 
-        <main class="chat-container">
-            <header class="chat-header">
-                <div class="chat-header-title">
-                    <h2>Robert AI</h2>
-                    <p>Language Learning Assistant</p>
-                </div>
-                <div class="header-actions">
-                    <button class="action-btn">
-                        <i class="fas fa-info-circle"></i>
-                    </button>
-                </div>
-            </header>
-
-            <div class="chat-messages" id="chat-messages">
-                <div class="welcome-message">
-                    <h3>Welcome to Robert AI</h3>
-                    <p>How can I help you learn a language today?</p>
-                </div>
-
-                <!-- Example bot message with speaker icon -->
-                <div class="bot-message">
-                    <p>Hello! How can I assist you?</p>
-                    <i class="fas fa-volume-up speaker-icon" id="bot-speaker-icon"></i>
-                </div>
-
+        <div class="chat-input-container">
+            <textarea id="messageInput" placeholder="Type your message..."></textarea>
+            <div class="input-buttons">
+                <button id="voiceInput" class="voice-input-button">
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button id="sendMessage" class="send-button">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
             </div>
-
-            <div class="chat-input-area">
-                <div class="input-container">
-                    <textarea 
-                        id="chat-input" 
-                        placeholder="Type your message..." 
-                        rows="1"
-                    ></textarea>
-                    
-                    <!-- Microphone button -->
-                    <button id="mic-btn" class="mic-button">
-                        <i class="fa-solid fa-microphone"></i>
-                        <div class="mic-circle" id="mic-animation"></div>
-                    </button>
-
-                    <!-- Send button -->
-                    <button id="send-btn" class="send-button">
-                        <i class="fas fa-paper-plane"></i>
-                    </button>
-                </div>
-                <div class="input-hints">
-                    <!-- Optional hints for users -->
-                </div>
-            </div>
-        </main>
+        </div>
     </div>
-    <script src="/static/js/scripts.js"></script>
+    <script src="/static/script.js"></script>
 </body>
 </html>
