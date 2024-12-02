@@ -54,7 +54,7 @@ def chat_with_groq(user_message, conversation_id=None):
         completion = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=0.7,
+            temperature=0.1,
         )
         
         # Add assistant's response to history
@@ -81,7 +81,7 @@ def text_to_speech(text):
         print(f"Error in text_to_speech: {str(e)}")
         return None
 
-def record_audio(duration=5, samplerate=16000):
+def record_audio(duration=10000, samplerate=16000):
     try:
         print("Recording...")
         audio_data = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='int16')
