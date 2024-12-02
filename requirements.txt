@@ -6,5 +6,4 @@ gtts==2.3.1
 sounddevice==0.4.6
 SpeechRecognition==3.8.1
 gunicorn==20.1.0
-pyaudio==0.2.11
-pyaudio-wheels
+PyAudio @ https://github.com/intxcc/pyaudio_portaudio/releases/download/1.2.0/PyAudio-0.2.11-cp311-cp311-manylinux1_x86_64.whl
