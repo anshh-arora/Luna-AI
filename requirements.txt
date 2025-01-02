@@ -13,7 +13,6 @@ packaging
 pipwin
 PyAudio
 pyjsparser
-pypiwin3
 PyPrind
 pySmartDL
 pyttsx3
