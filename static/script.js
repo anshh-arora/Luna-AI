@@ -1,67 +1,192 @@
 class ChatBot {
     constructor() {
-        this.voiceEnabled = false; // Determines if voice responses are enabled.
-        this.isListening = false;  // Tracks if the bot is currently listening for voice input.
-        this.synthesis = window.speechSynthesis; // Handles text-to-speech.
-        this.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)(); // Handles speech recognition (voice input).
-        this.silenceTimeout = null; // Timer for detecting user silence.
+        this.voiceEnabled = false;
+        this.isListening = false;
+        this.synthesis = window.speechSynthesis;
+        this.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        this.silenceTimeout = null;
+        this.currentUtterance = null;
+        this.isPaused = false;
+        this.audioQueue = [];
         
-        this.setupRecognition(); // Initialize speech recognition settings.
-        this.setupEventListeners(); // Add event listeners for user interactions.
+        this.setupRecognition();
+        this.setupEventListeners();
     }
 
     setupRecognition() {
-        this.recognition.continuous = false; // Stops listening after one phrase.
-        this.recognition.interimResults = false; // Does not return intermediate results.
-        this.recognition.lang = 'en-US'; // Language set to English (US).
+        this.recognition.continuous = true; // Changed to true for continuous listening
+        this.recognition.interimResults = true; // Enable interim results
+        this.recognition.lang = 'en-US';
 
-        // Event fired when speech recognition returns a result.
+        let finalTranscript = '';
+        let silenceTimer = null;
+
         this.recognition.onresult = (event) => {
-            const message = event.results[0][0].transcript; // Get the recognized text.
-            this.clearInput(); // Clear the input field.
-            this.sendMessage(message, true); // Send the message (voice input).
-            this.resetSilenceTimer(); // Reset silence timer after user speaks.
+            let interimTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+
+            // Update input field with current transcription
+            const input = document.getElementById('messageInput');
+            input.value = finalTranscript + interimTranscript;
+
+            // Reset silence detection
+            if (silenceTimer) clearTimeout(silenceTimer);
+            silenceTimer = setTimeout(() => {
+                if (finalTranscript.trim()) {
+                    this.sendMessage(finalTranscript.trim(), true);
+                    finalTranscript = '';
+                    input.value = '';
+                    this.stopListening();
+                }
+            }, 1500); // 1.5 seconds of silence to detect end of speech
         };
 
-        // Event fired when recognition ends or times out.
         this.recognition.onend = () => {
+            if (this.isListening) {
+                this.recognition.start(); // Restart if still supposed to be listening
+            } else {
+                this.toggleVoiceInputClass(false);
+            }
+        };
+
+        this.recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
             this.isListening = false;
-            this.toggleVoiceInputClass(false); // Update UI to reflect the state.
+            this.toggleVoiceInputClass(false);
         };
     }
 
     setupEventListeners() {
-        // Click event for the "Send" button.
-        document.getElementById('sendMessage').addEventListener('click', () => {
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim(); // Get the trimmed input text.
-            if (message) {
-                this.stopSpeaking(); // Stop any ongoing speech.
-                this.sendMessage(message, false); // Send the message (text input).
-                this.clearInput(); // Clear the input field.
+        // Send button click event
+        document.getElementById('sendMessage').addEventListener('click', () => this.handleSendMessage());
+
+        // Voice input button
+        document.getElementById('voiceInput').addEventListener('click', () => {
+            this.stopSpeaking();
+            this.isListening ? this.stopListening() : this.startListening();
+        });
+
+        // Input field key events
+        document.getElementById('messageInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.handleSendMessage();
             }
         });
 
-        // Click event for the microphone button (voice input toggle).
-        document.getElementById('voiceInput').addEventListener('click', () => {
-            this.stopSpeaking(); // Stop any ongoing speech.
-            this.isListening ? this.stopListening() : this.startListening(); // Toggle listening state.
-        });
-
-        // Click event for enabling/disabling voice responses.
-        document.getElementById('toggleVoice').addEventListener('click', () => {
-            this.voiceEnabled = !this.voiceEnabled; // Toggle voice response state.
-            this.updateVoiceIcon(); // Update the UI icon to reflect the state.
-        });
-
-        // Enter key event for sending a message without a line break.
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault(); // Prevent default behavior (new line).
-                document.getElementById('sendMessage').click(); // Trigger click event.
+        // Message speaker button click event
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('.message-speaker')) {
+                const messageContent = e.target.closest('.message-content');
+                const text = messageContent.textContent;
+                if (this.isPaused) {
+                    this.resumeSpeaking();
+                } else {
+                    this.stopSpeaking();
+                    this.speak(text);
+                }
             }
         });
     }
+
+    handleSendMessage() {
+        const input = document.getElementById('messageInput');
+        const message = input.value.trim();
+        if (message) {
+            this.stopSpeaking();
+            this.sendMessage(message, false);
+            input.value = '';
+        }
+    }
+
+    speak(text) {
+        if (this.currentUtterance) {
+            this.synthesis.cancel();
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        this.currentUtterance = utterance;
+
+        utterance.onend = () => {
+            this.currentUtterance = null;
+            this.isPaused = false;
+            if (this.audioQueue.length > 0) {
+                const nextText = this.audioQueue.shift();
+                this.speak(nextText);
+            }
+        };
+
+        utterance.onpause = () => {
+            this.isPaused = true;
+        };
+
+        utterance.onresume = () => {
+            this.isPaused = false;
+        };
+
+        this.synthesis.speak(utterance);
+    }
+
+    stopSpeaking() {
+        if (this.synthesis.speaking) {
+            this.synthesis.cancel();
+            this.currentUtterance = null;
+            this.isPaused = false;
+            this.audioQueue = [];
+        }
+    }
+
+    pauseSpeaking() {
+        if (this.synthesis.speaking && !this.isPaused) {
+            this.synthesis.pause();
+            this.isPaused = true;
+        }
+    }
+
+    resumeSpeaking() {
+        if (this.synthesis.speaking && this.isPaused) {
+            this.synthesis.resume();
+            this.isPaused = false;
+        }
+    }
+
+    // Update message UI to show speaking state
+    updateMessageSpeakerIcon(messageElement, isSpeaking) {
+        const speakerButton = messageElement.querySelector('.message-speaker i');
+        if (speakerButton) {
+            speakerButton.className = isSpeaking ? 'fas fa-pause' : 'fas fa-volume-up';
+        }
+    }
+
+    addMessage(message, sender) {
+        const messagesContainer = document.getElementById('chatMessages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        content.textContent = message;
+
+        if (sender === 'bot') {
+            const speakerButton = document.createElement('button');
+            speakerButton.className = 'message-speaker';
+            speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+            content.appendChild(speakerButton);
+        }
+
+        messageDiv.appendChild(content);
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
 
     clearInput() {
         document.getElementById('messageInput').value = ''; // Clear the input field.
