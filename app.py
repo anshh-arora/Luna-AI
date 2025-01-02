@@ -1,16 +1,14 @@
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from groq import Groq
 import os
 import uuid
-import tempfile
-import sounddevice as sd
-import numpy as np
+from gtts import gTTS
 import io
 import base64
-import wave
 import speech_recognition as sr
-from gtts import gTTS
+import tempfile
+import json
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
@@ -55,6 +53,7 @@ def chat_with_groq(user_message, conversation_id=None):
             model=MODEL,
             messages=messages,
             temperature=0.1,
+            max_tokens=1024
         )
         
         # Add assistant's response to history
@@ -81,43 +80,38 @@ def text_to_speech(text):
         print(f"Error in text_to_speech: {str(e)}")
         return None
 
-def record_audio(duration=10000000, samplerate=16000):
+def speech_to_text(audio_file):
     try:
-        print("Recording...")
-        audio_data = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='int16')
-        sd.wait()  # Wait for the recording to finish
-        return audio_data
-    except Exception as e:
-        print(f"Error in record_audio: {str(e)}")
-        return None
-
-def save_audio(audio_data, filename="temp_audio.wav"):
-    try:
-        with wave.open(filename, 'wb') as wf:
-            wf.setnchannels(1)  # Mono audio
-            wf.setsampwidth(2)  # 16-bit samples
-            wf.setframerate(16000)  # Sampling rate
-            wf.writeframes(audio_data)
-    except Exception as e:
-        print(f"Error saving audio: {str(e)}")
-
-def speech_to_text(audio_data):
-    try:
-        # Save audio data to a temporary file
-        temp_audio_path = tempfile.mktemp(suffix='.wav')
-        save_audio(audio_data, temp_audio_path)
-        
+        # Save the uploaded audio to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
+            audio_file.save(temp_audio.name)
+            
         # Use SpeechRecognition to convert speech to text
-        with sr.AudioFile(temp_audio_path) as source:
+        with sr.AudioFile(temp_audio.name) as source:
+            # Adjust recognition settings
+            recognizer.dynamic_energy_threshold = True
+            recognizer.energy_threshold = 4000
+            
+            # Record the entire audio file
             audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio)
+            
+            # Perform recognition with increased timeout
+            text = recognizer.recognize_google(audio, language='en-US')
             return text
+            
+    except sr.UnknownValueError:
+        return "Could not understand audio"
+    except sr.RequestError as e:
+        return f"Could not request results; {str(e)}"
     except Exception as e:
         print(f"Error in speech_to_text: {str(e)}")
         return None
     finally:
-        if 'temp_audio_path' in locals():
-            os.unlink(temp_audio_path)
+        # Clean up temporary file
+        try:
+            os.unlink(temp_audio.name)
+        except:
+            pass
 
 @app.route('/')
 def index():
@@ -129,7 +123,6 @@ def chat():
         data = request.get_json()
         user_message = data.get('message', '')
         conversation_id = data.get('conversation_id', str(uuid.uuid4()))
-        voice_output = data.get('voice_output', False)
         
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
@@ -137,17 +130,16 @@ def chat():
         # Get response from Groq
         response = chat_with_groq(user_message, conversation_id)
         
+        # Generate voice response
+        audio_io = text_to_speech(response)
         result = {
             'response': response,
             'conversation_id': conversation_id
         }
         
-        # Generate voice response if requested
-        if voice_output:
-            audio_io = text_to_speech(response)
-            if audio_io:
-                audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
-                result['voice_response'] = audio_base64
+        if audio_io:
+            audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
+            result['voice_response'] = audio_base64
         
         return jsonify(result)
     
@@ -161,26 +153,25 @@ def handle_voice():
             return jsonify({'error': 'No audio file provided'}), 400
         
         audio_file = request.files['audio']
-        audio_data = audio_file.read()
+        conversation_id = request.form.get('conversation_id', str(uuid.uuid4()))
         
         # Convert speech to text
-        text = speech_to_text(audio_data)
+        text = speech_to_text(audio_file)
         
         if not text:
             return jsonify({'error': 'Could not transcribe audio'}), 400
         
         # Get response from Groq
-        conversation_id = request.form.get('conversation_id', str(uuid.uuid4()))
         response = chat_with_groq(text, conversation_id)
         
+        # Generate voice response
+        audio_io = text_to_speech(response)
         result = {
             'text': text,
             'response': response,
             'conversation_id': conversation_id
         }
         
-        # Generate voice response
-        audio_io = text_to_speech(response)
         if audio_io:
             audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
             result['voice_response'] = audio_base64
@@ -190,13 +181,5 @@ def handle_voice():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Run the application
 if __name__ == '__main__':
     app.run(debug=True)
-
-
-# i want it to stop speaking and listing just same as alexa do
-# it is not recoring complete message for eg if user explaing about something in 1 min so it stops recording with in 10 to 15 sec
-# the message should idrect send after presing enter and to change line user need to use shift+ enter key 
-
-#correct the code i want to improve this functionality and let me know there is need to modify js file
