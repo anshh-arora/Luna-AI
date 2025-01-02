@@ -11,7 +11,7 @@ gunicorn
 idna
 packaging
 pipwin
-PyAudio
+PyAudio @ https://files.pythonhosted.org/packages/d5/f4/8e22f19ea38a64c852920b6461efde62e38d10a1c1f7b2c90fe5dcc1a91e/PyAudio-0.2.14-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 pyjsparser
 PyPrind
 pySmartDL
