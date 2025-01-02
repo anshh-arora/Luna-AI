@@ -16,7 +16,6 @@ pyjsparser
 PyPrind
 pySmartDL
 pyttsx3
-pywin3
 requests
 urllib3
 Werkzeug
