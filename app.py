@@ -10,6 +10,11 @@ import speech_recognition as sr
 import tempfile
 import json
 
+try:
+    import pyaudio
+except ImportError:
+    print("Warning: PyAudio not available, speech functionality will be limited")
+    
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
 
