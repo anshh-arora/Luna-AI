@@ -20,4 +20,5 @@ datetime
 PyAudio==0.2.13
 
 # Other requirements...
-./wheels/PyAudio-0.2.13-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+
+wheels/PyAudio-0.2.11-cp37-cp37m-win_amd64.whl
