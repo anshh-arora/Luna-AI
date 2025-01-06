@@ -1,7 +1,0 @@
-services:
-  - type: web
-    buildCommand: |
-      chmod +x prebuild.sh
-      ./prebuild.sh
-      pip install -r requirements.txt
-    startCommand: gunicorn app:app
