@@ -17,8 +17,3 @@ requests
 urllib3
 wikipedia
 datetime
-PyAudio==0.2.13
-
-# Other requirements...
-
-wheels/PyAudio-0.2.11-cp37-cp37m-win_amd64.whl

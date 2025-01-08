@@ -14,7 +14,7 @@ try:
     import pyaudio
 except ImportError:
     print("Warning: PyAudio not available, speech functionality will be limited")
-    
+
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
 
@@ -185,6 +185,6 @@ def handle_voice():
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
+    
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=7860)
