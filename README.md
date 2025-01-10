@@ -3,6 +3,9 @@
 ## Project Overview
 Luna AI is an advanced, voice-enabled conversational AI designed to revolutionize language learning through interactive, personalized communication.
 
+## Try Luna AI on Hugging Face
+https://huggingface.co/spaces/anshharora/Luna_AI
+
 ## What is Luna AI?
 Luna AI is more than just a chatbot – it's an intelligent language learning companion that transforms traditional language learning into an engaging, adaptive experience. Powered by cutting-edge AI technology, Luna provides:
 - Real-time conversational practice
