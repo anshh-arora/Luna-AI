@@ -1,0 +1,705 @@
+// ChatBot.js
+class ChatBot {
+    constructor() {
+        this.voiceEnabled = false;
+        this.isListening = false;
+        this.synthesis = window.speechSynthesis;
+        this.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        this.silenceTimeout = null;
+        this.currentUtterance = null;
+        
+        this.setupRecognition();
+        this.setupEventListeners();
+    }
+
+    setupRecognition() {
+        this.recognition.continuous = false;
+        this.recognition.interimResults = false;
+        this.recognition.lang = 'en-US';
+
+        this.recognition.onresult = (event) => {
+            const message = event.results[0][0].transcript;
+            this.clearInput();
+            this.sendMessage(message, true);
+            this.resetSilenceTimer();
+        };
+
+        this.recognition.onend = () => {
+            this.isListening = false;
+            this.toggleVoiceInputClass(false);
+        };
+    }
+
+    setupEventListeners() {
+        // Enhanced message input handling
+        const messageInput = document.getElementById('messageInput');
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) {
+                    // Allow new line with Shift+Enter
+                    return;
+                }
+                e.preventDefault();
+                const message = messageInput.value.trim();
+                if (message) {
+                    this.stopSpeaking();
+                    this.sendMessage(message, false);
+                    this.clearInput();
+                }
+            }
+        });
+
+        document.getElementById('sendMessage').addEventListener('click', () => {
+            const message = messageInput.value.trim();
+            if (message) {
+                this.stopSpeaking();
+                this.sendMessage(message, false);
+                this.clearInput();
+            }
+        });
+
+        document.getElementById('voiceInput').addEventListener('click', () => {
+            this.stopSpeaking();
+            this.isListening ? this.stopListening() : this.startListening();
+        });
+
+        document.getElementById('toggleVoice').addEventListener('click', () => {
+            this.voiceEnabled = !this.voiceEnabled;
+            this.updateVoiceIcon();
+            if (!this.voiceEnabled) {
+                this.stopSpeaking();
+            }
+        });
+    }
+
+    clearInput() {
+        document.getElementById('messageInput').value = '';
+    }
+
+    toggleVoiceInputClass(isListening) {
+        const button = document.getElementById('voiceInput');
+        button.classList.toggle('listening', isListening);
+    }
+
+    updateVoiceIcon() {
+        const icon = document.querySelector('#toggleVoice i');
+        icon.className = this.voiceEnabled ? 'fas fa-volume-up' : 'fas fa-volume-mute';
+    }
+
+    startListening() {
+        if (this.isListening) return;
+        
+        try {
+            this.isListening = true;
+            this.toggleVoiceInputClass(true);
+            this.recognition.start();
+            this.startSilenceTimer();
+        } catch (error) {
+            console.error('Error starting recognition:', error);
+            this.isListening = false;
+            this.toggleVoiceInputClass(false);
+        }
+    }
+
+    stopListening() {
+        this.isListening = false;
+        this.toggleVoiceInputClass(false);
+        this.recognition.stop();
+        this.clearSilenceTimer();
+    }
+
+    stopSpeaking() {
+        if (this.currentUtterance) {
+            this.synthesis.cancel();
+            this.currentUtterance = null;
+        }
+    }
+
+    async sendMessage(message, isVoiceInput) {
+        this.addMessage(message, 'user');
+        this.showTypingIndicator();
+    
+        try {
+            const response = await this.callAPI(message);
+            this.removeTypingIndicator();
+            this.addMessage(response, 'bot');
+            
+            // Automatically speak if it's voice input or voice is enabled
+            if (isVoiceInput || this.voiceEnabled) {
+                this.speak(response);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            this.removeTypingIndicator();
+            this.addMessage('Sorry, there was an error processing your request.', 'bot');
+            this.isListening = false;
+            this.toggleVoiceInputClass(false);
+        }
+    }
+
+    async callAPI(message) {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        if (!response.ok) throw new Error('API request failed');
+        const data = await response.json();
+        return data.response;
+    }
+
+    addMessage(message, sender) {
+        const messagesContainer = document.getElementById('chatMessages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        content.textContent = message;
+
+        // Add speaker button to bot messages
+        if (sender === 'bot') {
+            const speakerButton = document.createElement('button');
+            speakerButton.className = 'message-speaker';
+            speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+            
+            // Toggle speech for this specific message
+            let isSpeaking = false;
+            speakerButton.onclick = () => {
+                if (isSpeaking) {
+                    this.stopSpeaking();
+                    isSpeaking = false;
+                    speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+                } else {
+                    this.stopSpeaking();
+                    this.speak(message, () => {
+                        isSpeaking = false;
+                        speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+                    });
+                    isSpeaking = true;
+                    speakerButton.innerHTML = '<i class="fas fa-volume-mute"></i>';
+                }
+            };
+            content.appendChild(speakerButton);
+        }
+
+        messageDiv.appendChild(content);
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    showTypingIndicator() {
+        const indicator = document.createElement('div');
+        indicator.className = 'message bot typing-indicator';
+        indicator.innerHTML = '<div class="typing-dot"></div>'.repeat(3);
+        document.getElementById('chatMessages').appendChild(indicator);
+    }
+
+    removeTypingIndicator() {
+        const indicator = document.querySelector('.typing-indicator');
+        if (indicator) indicator.remove();
+    }
+
+    speak(text, onComplete = null) {
+        this.stopSpeaking();
+        
+        const chunks = this.splitTextIntoChunks(text, 200);
+        let currentChunkIndex = 0;
+        
+        const speakNextChunk = () => {
+            if (currentChunkIndex >= chunks.length) {
+                if (onComplete) onComplete();
+                return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(chunks[currentChunkIndex]);
+            utterance.rate = 1;
+            utterance.pitch = 1;
+
+            utterance.onend = () => {
+                currentChunkIndex++;
+                if (currentChunkIndex < chunks.length) {
+                    speakNextChunk();
+                } else if (onComplete) {
+                    onComplete();
+                }
+            };
+
+            utterance.onerror = (event) => {
+                console.error('Speech synthesis error:', event.error);
+                if (onComplete) onComplete();
+            };
+
+            this.currentUtterance = utterance;
+            this.synthesis.speak(utterance);
+        };
+
+        speakNextChunk();
+    }
+
+    splitTextIntoChunks(text, maxLength) {
+        const chunks = [];
+        let remainingText = text;
+
+        while (remainingText.length > 0) {
+            if (remainingText.length <= maxLength) {
+                chunks.push(remainingText);
+                break;
+            }
+
+            let chunk = remainingText.slice(0, maxLength);
+            let lastPeriod = chunk.lastIndexOf('.');
+            let lastComma = chunk.lastIndexOf(',');
+            let lastSpace = chunk.lastIndexOf(' ');
+
+            let breakPoint = Math.max(
+                lastPeriod !== -1 ? lastPeriod + 1 : -1,
+                lastComma !== -1 ? lastComma + 1 : -1,
+                lastSpace !== -1 ? lastSpace : maxLength
+            );
+
+            chunk = remainingText.slice(0, breakPoint);
+            chunks.push(chunk);
+            remainingText = remainingText.slice(breakPoint).trim();
+        }
+
+        return chunks;
+    }
+
+    startSilenceTimer() {
+        this.clearSilenceTimer();
+        this.silenceTimeout = setTimeout(() => {
+            this.stopListening();
+        }, 10000);
+    }
+
+    resetSilenceTimer() {
+        this.clearSilenceTimer();
+        this.startSilenceTimer();
+    }
+
+    clearSilenceTimer() {
+        if (this.silenceTimeout) {
+            clearTimeout(this.silenceTimeout);
+            this.silenceTimeout = null;
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const chatBot = new ChatBot();
+});
+
+
+# app.py
+from flask import Flask, request, jsonify, render_template, send_file
+from dotenv import load_dotenv
+from groq import Groq
+import os
+import uuid
+import tempfile
+import sounddevice as sd
+import numpy as np
+import io
+import base64
+import wave
+import speech_recognition as sr
+from gtts import gTTS
+
+app = Flask(__name__, static_folder='static')
+load_dotenv()
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=GROQ_API_KEY)
+MODEL = "llama3-70b-8192"
+
+recognizer = sr.Recognizer()
+conversations = {}
+
+def load_base_prompt():
+    try:
+        with open("base_prompt.txt", "r") as file:
+            return file.read().strip()
+    except FileNotFoundError:
+        print("Error: base_prompt.txt file not found.")
+        return "You are a helpful assistant."
+
+base_prompt = load_base_prompt()
+
+def chat_with_groq(user_message, conversation_id=None):
+    try:
+        messages = conversations.get(conversation_id, [])
+        if not messages:
+            messages.append({"role": "system", "content": base_prompt})
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=0.1,
+        )
+        
+        assistant_message = completion.choices[0].message.content.strip()
+        messages.append({"role": "assistant", "content": assistant_message})
+        
+        if conversation_id:
+            conversations[conversation_id] = messages
+        
+        return assistant_message
+    except Exception as e:
+        print(f"Error in chat_with_groq: {str(e)}")
+        return f"I apologize, but I'm having trouble responding right now. Error: {str(e)}"
+
+def text_to_speech(text):
+    try:
+        tts = gTTS(text=text, lang='en')
+        audio_io = io.BytesIO()
+        tts.write_to_fp(audio_io)
+        audio_io.seek(0)
+        return audio_io
+    except Exception as e:
+        print(f"Error in text_to_speech: {str(e)}")
+        return None
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        user_message = data.get('message', '')
+        conversation_id = data.get('conversation_id', str(uuid.uuid4()))
+        voice_output = data.get('voice_output', False)
+        
+        if not user_message:
+            return jsonify({'error': 'No message provided'}), 400
+        
+        response = chat_with_groq(user_message, conversation_id)
+        
+        result = {
+            'response': response,
+            'conversation_id': conversation_id
+        }
+        
+        if voice_output:
+            audio_io = text_to_speech(response)
+            if audio_io:
+                audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
+                result['voice_response'] = audio_base64
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+
+
+    I have provided you my app.py file and js fileI want you to improve the functionality of the chat botI want that once the usercomplete its message and send it to the bot then bot will respond to the user with the voice and when the bot bot stops the mic should automatically trigger so that user can input their messageand also I want that if there is some interruption for the board should stop like if a user clicks something or press mic again or send a message through text here I want the functionality same like gpt useso please modify the code
+
+
+index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chatbot</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+</head>
+<body>
+    <div class="Luna">
+        <h1><a href="https://github.com/anshh-arora/Luna-AI" target="_blank">Luna AI</a></h1>
+    </div>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="bot-profile">
+                <i class="fas fa-atom"></i>
+                <span class="bot-name">AI Assistant</span>
+            </div>
+            <div class="voice-controls">
+                
+            </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages"></div>
+
+        <div class="message-templates" style="display: none;">
+            <div class="message bot-message">
+                <div class="message-avatar">
+                    <i class="fas fa-atom"></i>
+                </div>
+                <div class="message-content">
+
+                </div>
+            </div>
+            
+            <div class="message user-message">
+                <div class="message-avatar">
+                    <i class="fas fa-user-alt"></i>
+                </div>
+                <div class="message-content"></div>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <textarea id="messageInput" placeholder="Type your message..." ></textarea>
+            <div class="input-buttons">
+                <button id="voiceInput" class="voice-input-button">
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button id="sendMessage" class="send-button" type="submit">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>
+
+
+
+css File
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #181818; /* Dark background */
+    color: #e0e0e0; /* Light text color */
+    height: 100vh;
+
+
+}
+.Luna{
+    padding: 10px;
+    margin-left: 35px;
+ }
+ a:link, a:visited {
+    text-decoration: none;
+    color: #e0e0e0;
+    display: inline-block;
+  }
+  
+  a:hover, a:active {
+    color:blueviolet;
+  }
+.chat-container {
+
+    margin: 10px 20px 30px 40px;
+    height: 89vh;
+    width: 192vh;
+    background-color: #242424; /* Dark background */
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    padding: 1rem;
+    border-bottom: 1px solid #444; /* Darker separator */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.bot-profile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.bot-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+.bot-name {
+    font-weight: bold;
+    font-size: 1.1rem;
+    color: #f0f2f5; /* Light text */
+}
+
+.voice-controls {
+    display: flex;
+    gap: 10px;
+}
+
+.voice-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: background-color 0.3s;
+    color: #f0f2f5; /* Light text */
+}
+
+.voice-button:hover {
+    background-color: #444; /* Dark hover */
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.message {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.message.user {
+    flex-direction: row-reverse;
+}
+
+.message-content {
+    max-width: 70%;
+    padding: 0.8rem;
+    border-radius: 12px;
+    position: relative;
+    font-size: 20px;
+}
+
+.user .message-content {
+    background-color: #006acc; /* Blue background */
+    color: white;
+    border-radius: 18px 18px 4px 18px;
+}
+
+.bot .message-content {
+    background-color: #333; /* Dark message background */
+    color: #f0f2f5; /* Light text */
+    border-radius: 18px 18px 18px 4px;
+}
+
+.chat-input-container {
+    padding: 1rem;
+    border-top: 1px solid #444; /* Dark separator */
+    position: relative;
+}
+
+.chat-input-container textarea {
+    width: 100%;
+    padding: 0.8rem 80px 0.8rem 1rem;
+    border: 1px solid #444; /* Dark border */
+    border-radius: 20px;
+    resize: none;
+    height: 50px;
+    font-size: 1rem;
+    background-color: #333; /* Dark background for input */
+    color: #f0f2f5; /* Light text */
+}
+
+.input-buttons {
+    position: absolute;
+    right: 1.5rem;
+    bottom: 1.7rem;
+    display: flex;
+    gap: 8px;
+}
+
+.voice-input-button, .send-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    color: #006acc; /* Blue color */
+    transition: color 0.3s;
+}
+
+.voice-input-button:hover, .send-button:hover {
+    color: #004a77; /* Darker blue on hover */
+}
+
+.message-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    float: right;
+    display: none;
+}
+
+.message-avatar i {
+    font-size: 1.2rem;
+    color: #006acc; /* Blue icon */
+}
+
+/* Add these styles to your existing CSS */
+.message-speaker {
+    background: none;
+    border: none;
+    color: #006acc;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: 8px;
+    transition: color 0.3s;
+}
+
+.message-speaker.speaking {
+    background-color: #e0e0e0;
+}
+.message-speaker:hover {
+    color: #004a77;
+}
+
+
+.user-message .message-avatar i {
+    color: #f0f2f5; /* Light icon for user messages */
+}
+
+.listening .fa-microphone {
+    color: #ff4444;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+.typing-indicator {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+}
+
+.typing-dot {
+    width: 8px;
+    height: 8px;
+    background-color: #90949c; /* Gray typing dots */
+    border-radius: 50%;
+    animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) { animation-delay: 200ms; }
+.typing-dot:nth-child(2) { animation-delay: 300ms; }
+.typing-dot:nth-child(3) { animation-delay: 400ms; }
+
+@keyframes typing {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}

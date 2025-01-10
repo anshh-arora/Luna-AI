@@ -1,2 +1,5 @@
-myenv
-env
+__myenv__/
+.env
+__pycache__/
+*.pyc
+*.pyo

@@ -1,245 +1,146 @@
 class ChatBot {
     constructor() {
-        this.voiceEnabled = false;
+        this.voiceEnabled = true;
         this.isListening = false;
+        this.isSpeaking = false;
         this.synthesis = window.speechSynthesis;
         this.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        this.silenceTimeout = null;
         this.currentUtterance = null;
-        this.isPaused = false;
-        this.audioQueue = [];
-        this.mediaRecorder = null;
-        this.audioChunks = [];
-        this.isRecording = false;
         
         this.setupRecognition();
         this.setupEventListeners();
     }
 
     setupRecognition() {
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
+        this.recognition.continuous = false;
+        this.recognition.interimResults = false;
         this.recognition.lang = 'en-US';
 
-        this.recognition.onstart = () => {
-            this.isListening = true;
-            this.toggleVoiceInputClass(true);
+        this.recognition.onresult = (event) => {
+            const message = event.results[0][0].transcript;
+            this.clearInput();
+            this.sendMessage(message, true);
+            this.resetSilenceTimer();
         };
 
         this.recognition.onend = () => {
             this.isListening = false;
             this.toggleVoiceInputClass(false);
-        };
-
-        this.recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            this.isListening = false;
-            this.toggleVoiceInputClass(false);
-        };
-
-        this.recognition.onresult = (event) => {
-            let finalTranscript = '';
-            let interimTranscript = '';
-            
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    finalTranscript += transcript + ' ';
-                } else {
-                    interimTranscript += transcript;
-                }
+            if (this.autoListening && !this.isSpeaking) {
+                this.startListening();
             }
-
-            const input = document.getElementById('messageInput');
-            input.value = finalTranscript + interimTranscript;
         };
     }
 
     setupEventListeners() {
-        // Send button click event
-        document.getElementById('sendMessage').addEventListener('click', () => this.handleSendMessage());
-
-        // Voice input button
-        document.getElementById('voiceInput').addEventListener('mousedown', () => {
-            this.startRecording();
-        });
-
-        document.getElementById('voiceInput').addEventListener('mouseup', () => {
-            this.stopRecording();
-        });
-
-        // Input field key events
-        document.getElementById('messageInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+        const messageInput = document.getElementById('messageInput');
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) return;
                 e.preventDefault();
-                this.handleSendMessage();
-            }
-        });
-
-        // Message speaker button click event
-        document.addEventListener('click', (e) => {
-            if (e.target.closest('.message-speaker')) {
-                const messageContent = e.target.closest('.message-content');
-                const text = messageContent.textContent;
-                if (this.isPaused) {
-                    this.resumeSpeaking();
-                } else {
+                const message = messageInput.value.trim();
+                if (message) {
                     this.stopSpeaking();
-                    this.speak(text);
+                    this.stopListening();
+                    this.sendMessage(message, false);
+                    this.clearInput();
                 }
+            }
+        });
+
+        document.getElementById('sendMessage').addEventListener('click', () => {
+            const message = messageInput.value.trim();
+            if (message) {
+                this.stopSpeaking();
+                this.stopListening();
+                this.sendMessage(message, false);
+                this.clearInput();
+            }
+        });
+
+        document.getElementById('voiceInput').addEventListener('click', () => {
+            this.stopSpeaking();
+            if (this.isListening) {
+                this.stopListening();
+            } else {
+                this.startListening();
+            }
+        });
+
+        document.getElementById('chatMessages').addEventListener('click', () => {
+            if (this.isSpeaking) {
+                this.stopSpeaking();
             }
         });
     }
 
-    async startRecording() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.mediaRecorder = new MediaRecorder(stream);
-            this.audioChunks = [];
-            this.isRecording = true;
-            
-            this.mediaRecorder.ondataavailable = (event) => {
-                this.audioChunks.push(event.data);
-            };
-
-            this.mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
-                await this.sendAudioToServer(audioBlob);
-                stream.getTracks().forEach(track => track.stop());
-            };
-
-            this.mediaRecorder.start();
-            this.toggleVoiceInputClass(true);
-        } catch (error) {
-            console.error('Error starting recording:', error);
-        }
-    }
-
-    stopRecording() {
-        if (this.mediaRecorder && this.isRecording) {
-            this.mediaRecorder.stop();
-            this.isRecording = false;
-            this.toggleVoiceInputClass(false);
-        }
-    }
-
-    async sendAudioToServer(audioBlob) {
-        const formData = new FormData();
-        formData.append('audio', audioBlob);
-
-        try {
-            const response = await fetch('/api/voice', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) throw new Error('Failed to send audio');
-
-            const data = await response.json();
-            if (data.text) {
-                document.getElementById('messageInput').value = data.text;
-            }
-            if (data.response) {
-                this.addMessage(data.response, 'bot');
-                if (this.voiceEnabled) {
-                    this.speak(data.response);
-                }
-            }
-        } catch (error) {
-            console.error('Error sending audio:', error);
-            this.addMessage('Sorry, there was an error processing your voice input.', 'bot');
-        }
-    }
-
-    handleSendMessage() {
-        const input = document.getElementById('messageInput');
-        const message = input.value.trim();
-        if (message) {
-            this.stopSpeaking();
-            this.sendMessage(message);
-            input.value = '';
-        }
-    }
-
-    async sendMessage(message) {
-        this.addMessage(message, 'user');
+    async sendMessage(message, isVoiceInput) {
+        this.addMessageToChat(message, 'user');
         this.showTypingIndicator();
-
+    
         try {
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message })
-            });
-
-            if (!response.ok) throw new Error('Failed to send message');
-
-            const data = await response.json();
+            const response = await this.callAPI(message);
             this.removeTypingIndicator();
-            this.addMessage(data.response, 'bot');
-
+            this.addMessageToChat(response, 'bot');
+            
             if (this.voiceEnabled) {
-                this.speak(data.response);
+                this.speak(response);
             }
         } catch (error) {
             console.error('Error:', error);
             this.removeTypingIndicator();
-            this.addMessage('Sorry, there was an error processing your request.', 'bot');
+            this.addMessageToChat('Sorry, there was an error processing your request.', 'bot');
+            this.isListening = false;
+            this.toggleVoiceInputClass(false);
         }
     }
 
-    speak(text) {
-        if (this.synthesis.speaking) {
-            this.synthesis.cancel();
-        }
-
-        const utterance = new SpeechSynthesisUtterance(text);
-        this.currentUtterance = utterance;
-
-        utterance.onend = () => {
-            this.currentUtterance = null;
-            this.isPaused = false;
-            if (this.audioQueue.length > 0) {
-                const nextText = this.audioQueue.shift();
-                this.speak(nextText);
-            }
-        };
-
-        this.synthesis.speak(utterance);
-    }
-
-    stopSpeaking() {
-        if (this.synthesis.speaking) {
-            this.synthesis.cancel();
-            this.currentUtterance = null;
-            this.isPaused = false;
-            this.audioQueue = [];
-        }
-    }
-
-    toggleVoiceInputClass(isActive) {
-        const button = document.getElementById('voiceInput');
-        button.classList.toggle('active', isActive);
-    }
-
-    addMessage(message, sender) {
+    addMessageToChat(message, sender) {
         const messagesContainer = document.getElementById('chatMessages');
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${sender}`;
-
-        const content = document.createElement('div');
-        content.className = 'message-content';
-        content.textContent = message;
-
+        const templates = document.querySelector('.message-templates');
+        
+        // Clone the appropriate template
+        const messageTemplate = templates.querySelector(sender === 'bot' ? '.bot-message' : '.user-message').cloneNode(true);
+        
+        // Set the message content
+        messageTemplate.querySelector('.message-content').textContent = message;
+        
+        // Add speaker button for bot messages
         if (sender === 'bot') {
             const speakerButton = document.createElement('button');
             speakerButton.className = 'message-speaker';
             speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
-            content.appendChild(speakerButton);
+            
+            speakerButton.onclick = () => {
+                if (this.isSpeaking) {
+                    this.stopSpeaking();
+                    speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+                } else {
+                    this.stopSpeaking();
+                    this.speak(message, () => {
+                        speakerButton.innerHTML = '<i class="fas fa-volume-up"></i>';
+                    });
+                    speakerButton.innerHTML = '<i class="fas fa-volume-mute"></i>';
+                }
+            };
+            
+            messageTemplate.querySelector('.message-content').appendChild(speakerButton);
         }
-
-        messageDiv.appendChild(content);
-        messagesContainer.appendChild(messageDiv);
+        
+        messagesContainer.appendChild(messageTemplate);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    async callAPI(message) {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        if (!response.ok) throw new Error('API request failed');
+        const data = await response.json();
+        return data.response;
     }
 
     showTypingIndicator() {
@@ -253,8 +154,145 @@ class ChatBot {
         const indicator = document.querySelector('.typing-indicator');
         if (indicator) indicator.remove();
     }
+
+    speak(text, onComplete = null) {
+        this.stopSpeaking();
+        this.stopListening();
+        
+        const chunks = this.splitTextIntoChunks(text, 200);
+        let currentChunkIndex = 0;
+        this.isSpeaking = true;
+        
+        const speakNextChunk = () => {
+            if (currentChunkIndex >= chunks.length) {
+                this.isSpeaking = false;
+                if (this.voiceEnabled) {
+                    setTimeout(() => this.startListening(), 500);
+                }
+                if (onComplete) onComplete();
+                return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(chunks[currentChunkIndex]);
+            utterance.rate = 1;
+            utterance.pitch = 1;
+
+            utterance.onend = () => {
+                currentChunkIndex++;
+                if (currentChunkIndex < chunks.length) {
+                    speakNextChunk();
+                } else {
+                    this.isSpeaking = false;
+                    if (this.voiceEnabled) {
+                        setTimeout(() => this.startListening(), 500);
+                    }
+                    if (onComplete) onComplete();
+                }
+            };
+
+            utterance.onerror = (event) => {
+                console.error('Speech synthesis error:', event.error);
+                this.isSpeaking = false;
+                if (onComplete) onComplete();
+            };
+
+            this.currentUtterance = utterance;
+            this.synthesis.speak(utterance);
+        };
+
+        speakNextChunk();
+    }
+
+    splitTextIntoChunks(text, maxLength) {
+        const chunks = [];
+        let remainingText = text;
+
+        while (remainingText.length > 0) {
+            if (remainingText.length <= maxLength) {
+                chunks.push(remainingText);
+                break;
+            }
+
+            let chunk = remainingText.slice(0, maxLength);
+            let lastPeriod = chunk.lastIndexOf('.');
+            let lastComma = chunk.lastIndexOf(',');
+            let lastSpace = chunk.lastIndexOf(' ');
+
+            let breakPoint = Math.max(
+                lastPeriod !== -1 ? lastPeriod + 1 : -1,
+                lastComma !== -1 ? lastComma + 1 : -1,
+                lastSpace !== -1 ? lastSpace : maxLength
+            );
+
+            chunk = remainingText.slice(0, breakPoint);
+            chunks.push(chunk);
+            remainingText = remainingText.slice(breakPoint).trim();
+        }
+
+        return chunks;
+    }
+
+    startListening() {
+        if (this.isListening || this.isSpeaking) return;
+        
+        try {
+            this.isListening = true;
+            this.autoListening = true;
+            this.toggleVoiceInputClass(true);
+            this.recognition.start();
+            this.startSilenceTimer();
+        } catch (error) {
+            console.error('Error starting recognition:', error);
+            this.isListening = false;
+            this.toggleVoiceInputClass(false);
+        }
+    }
+
+    stopListening() {
+        this.autoListening = false;
+        this.isListening = false;
+        this.toggleVoiceInputClass(false);
+        this.recognition.stop();
+        this.clearSilenceTimer();
+    }
+
+    stopSpeaking() {
+        if (this.isSpeaking || this.currentUtterance) {
+            this.synthesis.cancel();
+            this.currentUtterance = null;
+            this.isSpeaking = false;
+        }
+    }
+
+    clearInput() {
+        document.getElementById('messageInput').value = '';
+    }
+
+    toggleVoiceInputClass(isListening) {
+        const button = document.getElementById('voiceInput');
+        button.classList.toggle('listening', isListening);
+    }
+
+    startSilenceTimer() {
+        this.clearSilenceTimer();
+        this.silenceTimeout = setTimeout(() => {
+            this.stopListening();
+        }, 10000);
+    }
+
+    resetSilenceTimer() {
+        this.clearSilenceTimer();
+        this.startSilenceTimer();
+    }
+
+    clearSilenceTimer() {
+        if (this.silenceTimeout) {
+            clearTimeout(this.silenceTimeout);
+            this.silenceTimeout = null;
+        }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    window.chatBot = new ChatBot();
+    const chatBot = new ChatBot();
 });

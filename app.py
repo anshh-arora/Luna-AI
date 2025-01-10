@@ -160,31 +160,54 @@ def handle_voice():
         audio_file = request.files['audio']
         conversation_id = request.form.get('conversation_id', str(uuid.uuid4()))
         
-        # Convert speech to text
-        text = speech_to_text(audio_file)
-        
-        if not text:
-            return jsonify({'error': 'Could not transcribe audio'}), 400
-        
-        # Get response from Groq
-        response = chat_with_groq(text, conversation_id)
-        
-        # Generate voice response
-        audio_io = text_to_speech(response)
-        result = {
-            'text': text,
-            'response': response,
-            'conversation_id': conversation_id
-        }
-        
-        if audio_io:
-            audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
-            result['voice_response'] = audio_base64
-        
-        return jsonify(result)
-    
+        # Save the audio file temporarily with a .wav extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
+            audio_file.save(temp_audio.name)
+            
+            # Use FFmpeg to convert the audio to the correct format
+            output_path = temp_audio.name + '_converted.wav'
+            os.system(f'ffmpeg -i {temp_audio.name} -acodec pcm_s16le -ac 1 -ar 16000 {output_path}')
+            
+            try:
+                # Use the converted file for speech recognition
+                with sr.AudioFile(output_path) as source:
+                    audio = recognizer.record(source)
+                    text = recognizer.recognize_google(audio)
+                
+                if not text:
+                    return jsonify({'error': 'Could not transcribe audio'}), 400
+                
+                # Get response from Groq
+                response = chat_with_groq(text, conversation_id)
+                
+                # Generate voice response
+                audio_io = text_to_speech(response)
+                result = {
+                    'text': text,
+                    'response': response,
+                    'conversation_id': conversation_id
+                }
+                
+                if audio_io:
+                    audio_base64 = base64.b64encode(audio_io.getvalue()).decode('utf-8')
+                    result['voice_response'] = audio_base64
+                
+                return jsonify(result)
+                
+            finally:
+                # Clean up temporary files
+                try:
+                    os.remove(temp_audio.name)
+                    os.remove(output_path)
+                except:
+                    pass
+                    
+    except sr.UnknownValueError:
+        return jsonify({'error': 'Could not understand audio'}), 400
+    except sr.RequestError as e:
+        return jsonify({'error': f'Could not request results: {str(e)}'}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    
+        print(f"Error in speech_to_text: {str(e)}")
+        return jsonify({'error': str(e)}), 400    
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=7860)
