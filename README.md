@@ -1,4 +1,5 @@
 # Luna AI: Conversational Language Learning Assistant
+![Luna AI](https://github.com/anshh-arora/Luna-AI/blob/main/luna_ai.jpg)
 ![Luna AI](https://github.com/anshh-arora/Luna-AI/blob/main/Luna%20AI%20-%20visual%20selection.png)
 
 ## Project Overview
